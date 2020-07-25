@@ -26,24 +26,6 @@ function getViewer() {
   return document.getElementById("hex-viewer");
 }
 
-function createRow(data) {
-  var i = 0;
-  return data.map(x => {
-    var el = document.createElement("div");
-    el.innerHTML = x;
-    el.setAttribute("data-col", i++);
-    return el;
-  });
-}
-
-
-
-function resizeViewer(numLines) {
-  var scroller = document.getElementById("scroller");
-  var dummy = scroller.getElementsByTagName("div")[0];
-  dummy.style.height = numLines * 40 + "px";
-}
-
 function writeDetails(details, append = true) {
   var el = document.getElementById("details");
   if (!append) el.textContent = "";
@@ -54,66 +36,76 @@ function createByteLink(pos) {
   var link = document.createElement("a");
   link.setAttribute("onclick", "viewer.jumpTo(" + pos + ");");
   link.href = "#";
-  link.textContent = decToHex(pos);
+  link.textContent = decToHex(pos, 8);
   return link;
 }
 
 function highlightSections(byte) {
-  var sections = parser.index.getSections(byte);
+  var sections = parser.data.getSections(byte);
   writeDetails(null, false);
   for (let section of sections) {
     viewer.highlightSection(section.start, section.end);
     writeDetails(section.toString());
-    writeDetails("Start:   0x" + createByteLink(section.start).outerHTML);
-    writeDetails("End:     0x" + createByteLink(section.end).outerHTML);
-    writeDetails("Length:  0x" + decToHex(section.length));
+    if (section.type == "Section") {
+      writeDetails("Start:       0x" + createByteLink(section.start).outerHTML);
+      writeDetails("End:         0x" + createByteLink(section.end).outerHTML);
+      writeDetails("Length:      0x" + decToHex(section.length, 8));
+    }
   }
 }
 
 function unhighlightAllSections() {
   for (let el of globals.cellsToClear) el.removeAttribute("style");
   var st = document.getElementsByClassName("section-start");
-  var en = document.getElementsByClassName("section-end")
-  for (let el of st) el.remove();
-  for (let el of en) el.remove();
+  var en = document.getElementsByClassName("section-end");
+  for (let i = st.length; i > 0; i--) st[i-1].remove();
+  for (let i = en.length; i > 0; i--) en[i-1].remove();
 }
-
-function getRowEl(parent, row) {
-  for (let el of parent.getElementsByTagName("div")) {
-    if (el.attributes["data-row"]?.value == row) return el;
-  }
-}
-
-function getColEl(parent, col) {
-  for (let el of parent.getElementsByTagName("div")) {
-    if (el.attributes["data-col"]?.value == col) return el;
-  }
-}
-
-
-
 
 var parser;
 var viewer;
 var dataset;
-const wasm_path = './wasm/basic_wasm_bg.wasm';
+
+const queryString = window.location.search;
+const urlParams = new URLSearchParams(queryString);
+var wasm_path;
+var importObject;
+
+if (urlParams.get("file") == "small") {
+  wasm_path = './wasm/simple.wasm';
+  importObject = { imports: { imported_func: arg => alert(arg) } };
+} else if (urlParams.get("file") == "edited") {
+  wasm_path = './wasm/edited.wasm';
+  importObject = { imports: { imported_func: arg => alert(arg) } };
+} else {
+  wasm_path = './wasm/basic_wasm_mod.wasm';
+  importObject = { imports: { __wbg_alert_e162fa999d6c31a8: (arg1, arg2) => alert(arg1 + ", " + arg2) } };
+}
+
+var wasmMod;
 
 window.onload = function() {
 
   fetch(wasm_path)
   .then(data => {
     data.body.getReader().read().then(res => {
-      dataset = new DataSet(res.value);
-      viewer = new Viewer(dataset, getViewer());
-      parser = new Parser(dataset.data);
+      wasmData = new DataSet(res.value);
+      viewer = new Viewer(wasmData, getViewer());
+      parser = new Parser(wasmData);
       viewer.print();
       parser.parse();
     });
   });
 
-  WebAssembly.compileStreaming(fetch(wasm_path))
+  // WebAssembly.compileStreaming(fetch(wasm_path))
+  // .then(function(mod) {
+  //   var imports = WebAssembly.Module.imports(mod);
+  //   console.log(imports[0]);
+  // });
+
+  WebAssembly.instantiateStreaming(fetch(wasm_path), importObject)
   .then(function(mod) {
-    var imports = WebAssembly.Module.imports(mod);
-    console.log(imports[0]);
+    wasmMod = mod.instance.exports;
+    //mod.instance.exports.exported_func();
   });
 }

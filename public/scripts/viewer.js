@@ -4,12 +4,12 @@ class Viewer {
   static ROW_SIZE = 14.667;
   static COL_SIZE = 21.3;
 
-  constructor(dataset, container) {
+  constructor(data, container) {
     if (!dataset instanceof DataSet) {
       throw("A viewer object must be initialised with a DataSet object");
     }
-    this.dataset = dataset;
-    this._bytes = dataset.data;
+    this.data = data;
+    this._bytes = data.bytes;
     this._container = container;
     this._lineOffset = 0;
     this._highlightedCells = [];
@@ -38,6 +38,16 @@ class Viewer {
     }
 
     var blankLine = (new Array(16)).fill(0);
+
+    var createRow = function(data) {
+      var i = 0;
+      return data.map(x => {
+        var el = document.createElement("div");
+        el.innerHTML = x;
+        el.setAttribute("data-col", i++);
+        return el;
+      });
+    }
 
     for (let i = 0; i < this._numLines; i++) {
       let lineNum = document.createElement("div");
@@ -157,6 +167,10 @@ class Viewer {
         }
       }
     }.bind(this);
+
+    this._container.onmouseleave = function(e) {
+      this.unhighlightAllCells();
+    }.bind(this);
   
     this._container.onmousewheel = function(e) {
       var scaleFactor = (e.deltaY % 150 == 0) ? 12 : 12; // Option to change factor for mouse vs trackpad
@@ -201,7 +215,7 @@ class Viewer {
       }
       // TODO: Also reset style of any temp highlights!
       if (globals.jumpTimeout) clearTimeout(globals.jumpTimeout);
-      tempHighlight(cell, 50);
+      tempHighlight(cell, 25);
 
     }, 0);
   }
@@ -224,7 +238,7 @@ class Viewer {
   }
 
   highlightCell = function(cell) {
-    cell.style.backgroundColor = "#eee";
+    cell.style.backgroundColor = "#0c88";
     this._highlightedCells.push(cell);
   }
 
