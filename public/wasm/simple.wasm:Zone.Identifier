@@ -1,0 +1,3 @@
+[ZoneTransfer]
+ZoneId=3
+HostUrl=https://raw.githubusercontent.com/mdn/webassembly-examples/master/js-api-examples/simple.wasm

@@ -1,0 +1,14 @@
+0x00 [MAGIC NUMBER = ASM]
+0x04 [VERSION = 1]
+0x08 [SECTION 1=TYPE, 8 bytes]...
+0x0a   [2 defs...]
+0x0b   [def 1: 0x60, 1 input int32, no return]
+0x0f   [def 2: 0x60, no inputs, no returns]
+0x12 [SECTION 2=IMPORTS, 0x19 (25) bytes]...
+0x14   [1 def...]
+0x15   [def 1:]
+0x16     [module name length  7: i m p o r t s]
+0x1d     [import name length 13: i m p o r t e d _ f u n c ]
+0x2b     [0x00 = func, 0x00  <- Desc type and desc string]
+0x2d [SECTION 3=FUNCTIONS, 2 functions, (1, 1) <- function type indexes??]
+0x31 [SECTION 7=EXPORTS, 0x11 (17) bytes]...
