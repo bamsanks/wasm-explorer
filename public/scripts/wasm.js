@@ -52,6 +52,13 @@ class Parser {
     return this._bytes[this._pos++];
   }
 
+  readByteArray = function(n) {
+    if (this._pos + n > this._fileLength) throw("Attempted to read byte past end of stream.");
+    var arr = this._bytes.slice(this._pos, this._pos + n);
+    this._pos += n;
+    return arr;
+  }
+
   readString = function(length = null) {
     var str = "";
     if (length === null) length = this.readByte();
@@ -110,16 +117,22 @@ class Parser {
     var headerLength = this._pos - headerStart;
     this.index.markSection(this._pos - headerLength, section.length + headerLength, description, "Section");
     switch (section.typeId) {
-      case Parser.SECTION_ENUMS.TYPE:
+      case Parser.SECTION_ENUMS.TYPE: // ID = 1
         section = this.readSectionType(section);
         break;
-      case Parser.SECTION_ENUMS.IMPORT:
+      case Parser.SECTION_ENUMS.IMPORT: // ID = 2
         section = this.readSectionImport(section);
         break;
-      case Parser.SECTION_ENUMS.FUNCTION:
+      case Parser.SECTION_ENUMS.FUNCTION: // ID = 3
         section = this.readSectionFunction(section);
         break;
-      case Parser.SECTION_ENUMS.EXPORT:
+      case Parser.SECTION_ENUMS.MEMORY: // ID = 4
+        section = this.readSectionMemory(section);
+        break;
+      case Parser.SECTION_ENUMS.GLOBAL: // ID = 5
+        section = this.readSectionGlobal(section);
+        break;
+      case Parser.SECTION_ENUMS.EXPORT: // ID = 7
         section = this.readSectionExports(section);
         break;
       case Parser.SECTION_ENUMS.CODE:
@@ -160,6 +173,32 @@ class Parser {
     template.types = [];
     for (let i = 0; i < count; i++) {
       template.types.push(this.readULEB128());
+    }
+    return template;
+  }
+
+  readSectionMemory = function(template) {
+    var count = this.readULEB128();
+    template.memories = [];
+    for (let i = 0; i < count; i++) {
+      let hasMax = (this.readByte() == 1);
+      template.memories.push({
+        min: this.readULEB128(),
+        max: hasMax ? this.readULEB128() : null
+      });
+    }
+    return template;
+  }
+
+  readSectionGlobal = function(template) {
+    var count = this.readULEB128();
+    template.globals = [];
+    for (let i = 0; i < count; i++) {
+      template.globals.push({
+        type: this.readValType(),
+        mutable: this.readByte() == 1,
+        expr: this.readByteArray(6)
+      });
     }
     return template;
   }

@@ -7,8 +7,8 @@
   margin-top: 20px;
   font-size: 12px;
   cursor: default;
-  max-height: 400px;
-  overflow-y: scroll;
+  height: 398px;
+  overflow-y: hidden;
 }
 
 #hex-viewer code {
@@ -21,6 +21,19 @@
   padding-left: 4px;
   padding-right: 4px;
   justify-content: left;
+}
+
+#hex-viewer code div.odd {
+  background-color: #efefef;
+}
+#hex-viewer code div.even {
+  background-color: #f8f8f8;
+}
+#hex-viewer.offset code div.odd {
+  background-color: #f8f8f8;
+}
+#hex-viewer.offset code div.even {
+  background-color: #efefef;
 }
 
 #hex-viewer>code>div>div:hover {
@@ -53,4 +66,9 @@
   font-family: consolas;
   font-size: 12px;
   white-space: pre;
+}
+
+#scroller {
+  overflow-y: scroll;
+  min-width: 30px;
 }
