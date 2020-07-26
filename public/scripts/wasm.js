@@ -14,25 +14,45 @@ class Parser {
 
   constructor(data) {
     this.data = data;
-    this._bytes = data.bytes;
-    this._fileLength = data.bytes.length;
+    //this._fileLength = data.bytes.length;
     this._pos = 0;
     this._version = null;
     this.sections = [];
   }
 
   get EOF() {
-    return this._pos >= this._fileLength;
+    return this._pos >= this.data.bytes.length;
+  }
+
+  get functions() {
+    var types = this.getSection(Parser.SECTION_ENUMS.TYPE).types;
+    var imports = this.getSection(Parser.SECTION_ENUMS.IMPORT).imports;
+    var funcs = this.getSection(Parser.SECTION_ENUMS.FUNCTION);
+    var exports = this.getSection(Parser.SECTION_ENUMS.EXPORT).exports;
+    for (var export of exports) {
+      export.type = types[export.idx];
+    }
+  }
+  set functions(data) {
+    
+  }
+
+  getSection = function(s) {
+    if (typeof s === "string") {
+      return this.sections.find(x => x.type.toUpperCase() == s.toUpperCase());
+    } else {
+      return this.sections.find(x => x.typeId == s);
+    }
   }
 
   readByte = function() {
     if (this.EOF) throw("Attempted to read byte past end of stream.");
-    return this._bytes[this._pos++];
+    return this.data.bytes[this._pos++];
   }
 
   readByteArray = function(n) {
-    if (this._pos + n > this._fileLength) throw("Attempted to read byte past end of stream.");
-    var arr = this._bytes.slice(this._pos, this._pos + n);
+    if (this._pos + n > this.data.bytes.length) throw("Attempted to read byte past end of stream.");
+    var arr = this.data.bytes.slice(this._pos, this._pos + n);
     this._pos += n;
     return Array.from(arr);
   }
@@ -90,6 +110,10 @@ class Parser {
     return [n % 256];
   }
 
+  writeByteArray = function(arr) {
+    return arr;
+  }
+
   writeULEB128 = function(n) {
     var arr = [];
     if (n == 0) arr = [0];
@@ -133,9 +157,9 @@ class Parser {
     this.data.startMarking(this._pos);
     section.typeId = this.readByte();
     section.type = Parser.SECTION_CODES[section.typeId];
-    this.data.startMarking(this._pos, "Section length", "Detail");
+    this.data.startMarking(this._pos);
     section.length = this.readULEB128();
-    this.data.stopMarking(this._pos);
+    this.data.stopMarking(this._pos, section.length, "Byte count");
     var description = section.type + " section";
     var headerLength = this._pos - headerStart;
     this.data.stopMarking(this._pos + section.length, description, "Section");
@@ -149,10 +173,10 @@ class Parser {
       case Parser.SECTION_ENUMS.FUNCTION: // ID = 0x03
         section = this.readSectionFunction(section);
         break;
-      case Parser.SECTION_ENUMS.MEMORY: // ID = 0x04
+      case Parser.SECTION_ENUMS.MEMORY: // ID = 0x05
         section = this.readSectionMemory(section);
         break;
-      case Parser.SECTION_ENUMS.GLOBAL: // ID = 0x05
+      case Parser.SECTION_ENUMS.GLOBAL: // ID = 0x06
         section = this.readSectionGlobal(section);
         break;
       case Parser.SECTION_ENUMS.EXPORT: // ID = 0x07
@@ -167,9 +191,8 @@ class Parser {
       default:
         console.log("Skipped " + section.typeId + " section");
         //this._pos += section.length;
-        section.rawdata = [section.typeId]
-          .concat(this.writeULEB128(section.length))
-          .concat(this.readByteArray(section.length));
+        // this doesn't include the section id and length!
+        section.rawdata = this.readByteArray(section.length);
     }
     this.sections.push(section);
   }
@@ -184,15 +207,19 @@ class Parser {
   }
 
   readSectionImport = function(template) {
+    this.data.startMarking(this._pos);
     var count = this.readULEB128();
+    this.data.stopMarking(this._pos, count, "Num entries");
     template.imports = [];
     for (let i = 0; i < count; i++) {
+      this.data.startMarking(this._pos, i, "Import idx");
       template.imports.push({
         module: this.readString(),
         name: this.readString(),
-        desc: this.readString(),
-        descTag: this.readByte()
+        tag: this.readByte(),
+        idx: this.readULEB128()
       });
+      this.data.stopMarking(this._pos);
     }
     return template;
   }
@@ -297,6 +324,7 @@ class Parser {
   }
 
   readType = function() {
+    // Types start with the function tag 0x60 = 96
     if (this.readByte() != 96) throw("Invalid type - unexpected value in tag byte");
     var params = [], returns = [];
     var numParams = this.readULEB128();
@@ -308,8 +336,6 @@ class Parser {
   
   writeSection = function(section) {
     var out = [];
-    out = out.concat(section.typeId) // Maybe enforce less than 256? writeByte function?
-    out = out.concat(this.writeULEB128(section.length));
     switch(section.typeId) {
       case Parser.SECTION_ENUMS.TYPE: // ID = 0x01
         out = out.concat(this.writeSectionType(section));
@@ -317,24 +343,26 @@ class Parser {
       case Parser.SECTION_ENUMS.IMPORT: // ID = 0x02
         out = out.concat(this.writeSectionImport(section));
         break;
-      // case Parser.SECTION_ENUMS.FUNCTION: // ID = 0x03
-      //   out = out.concat(this.writeSectionFunction(section));
-      //   break;
-      // case Parser.SECTION_ENUMS.MEMORY: // ID = 0x04
-      //   out = out.concat(this.writeSectionMemory(section));
-      //   break;
-      // case Parser.SECTION_ENUMS.GLOBAL: // ID = 0x05
-      //   out = out.concat(this.writeSectionGlobal(section));
-      //   break;
-      // case Parser.SECTION_ENUMS.EXPORT: // ID = 0x07
-      //   out = out.concat(this.writeSectionExport(section));
-      //   break;
-      // case Parser.SECTION_ENUMS.CODE: // ID = 0x0A
-      //   out = out.concat(this.writeSectionCode(section));
-      //   break;
+      case Parser.SECTION_ENUMS.FUNCTION: // ID = 0x03
+        out = out.concat(this.writeSectionFunction(section));
+        break;
+      case Parser.SECTION_ENUMS.MEMORY: // ID = 0x05
+        out = out.concat(this.writeSectionMemory(section));
+        break;
+      case Parser.SECTION_ENUMS.GLOBAL: // ID = 0x06
+        out = out.concat(this.writeSectionGlobal(section));
+        break;
+      case Parser.SECTION_ENUMS.EXPORT: // ID = 0x07
+        out = out.concat(this.writeSectionExport(section));
+        break;
+      case Parser.SECTION_ENUMS.CODE: // ID = 0x0A
+        out = out.concat(this.writeSectionCode(section));
+        break;
       default:
         out = out.concat(section.rawdata) // Unhandled, so just write what we read in
     }
+    out = this.writeULEB128(out.length).concat(out);
+    out = this.writeByte(section.typeId).concat(out); // Maybe enforce less than 256? writeByte function?
     return out;
   }
 
@@ -353,14 +381,83 @@ class Parser {
     for (let i = 0; i < section.imports.length; i++) {
       out = out.concat(this.writeString(section.imports[i].module));
       out = out.concat(this.writeString(section.imports[i].name));
-      out = out.concat(this.writeString(section.imports[i].desc));
-      out = out.concat(this.writeByte(section.imports[i].descTag));
+      out = out.concat(this.writeByte(section.imports[i].tag));
+      out = out.concat(this.writeULEB128(section.imports[i].idx));
     }
+    return out;
+  }
+
+  writeSectionFunction = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.types.length));
+    for (let i = 0; i < section.types.length; i++) {
+      out = out.concat(this.writeULEB128(section.types[i]));
+    }
+    return out;
+  }
+
+  writeSectionMemory = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.memories.length));
+    for (let i = 0; i < section.memories.length; i++) {
+      let hasMax = section.memories[i].max !== null;
+      out = out.concat(this.writeByte(hasMax));
+      out = out.concat(this.writeULEB128(section.memories[i].min));
+      if (hasMax) {
+        out = out.concat(this.writeULEB128(section.memories[i].max));
+      }
+    }
+    return out;
+  }
+
+  writeSectionGlobal = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.globals.length));
+    for (let i = 0; i < section.globals.length; i++) {
+      out = out.concat(this.writeByte(section.globals[i].type));
+      out = out.concat(this.writeByte(section.globals[i].mutable));
+      out = out.concat(this.writeByteArray(section.globals[i].expr));
+    }
+    return out;
+  }
+
+  writeSectionExport = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.exports.length));
+    for (let i = 0; i < section.exports.length; i++) {
+      out = out.concat(this.writeString(section.exports[i].name));
+      out = out.concat(this.writeByte(section.exports[i].tag));
+      out = out.concat(this.writeULEB128(section.exports[i].idx));
+    }
+    return out;
+  }
+
+  writeSectionCode = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.codes.length));
+    for (let i = 0; i < section.codes.length; i++) {
+      out = out.concat(this.writeCode(section.codes[i]));
+    }
+    return out;
+  }
+
+  writeCode = function(code) {
+    var out = [];
+    out = out.concat();
+    out = out.concat(this.writeULEB128(code.locals.length));
+    for (let local of code.locals) {
+      out = out.concat(this.writeULEB128(local.N));
+      out = out.concat(this.writeByte(local.valType));
+    }
+    out = out.concat(this.writeByteArray(code.byteCode));
+    var size = out.length;
+    out = this.writeULEB128(size).concat(out);
     return out;
   }
 
   writeType = function(type) {
     var out = [];
+    // Types start with the function tag 0x60 = 96
     out = out.concat(96);
     out = out.concat(this.writeULEB128(type.params.length));
     for (let i = 0; i < type.params.length; i++) out = out.concat(type.params[i]);
@@ -378,8 +475,19 @@ class Parser {
       }
     }
   }
+
+  getFunction = function(idx) {
+    // var imports = this.sections.filter(x => x.typeId == Parser.SECTION_ENUMS.IMPORT)[0];
+    // var exports = this.sections.filter(x => x.typeId == Parser.SECTION_ENUMS.EXPORT)[0];
+    // for (var import of imports.imports) {
+
+    // }
+  }
   
   parse = function() {
+    this._pos = 0;
+    this.sections = [];
+    this.data.removeAllSections();
     this.readMagicNumber();
     this.readVersion();
     while (!this.EOF) {
@@ -387,14 +495,24 @@ class Parser {
     }
   }
 
-  write = function() {
+  write = function(updateSelf = true) {
     var out = [];
     out = out.concat(this.writeMagicNumber())
     out = out.concat(this.writeVersion())
     for (var section of this.sections) {
       if (section) out = out.concat(this.writeSection(section));
     }
+    if (updateSelf) this.data.bytes = out;
     return out;
+  }
+
+  instantiateSelf = async function(importObject = null) {
+    var buffer = new Uint8Array(this.data.bytes).buffer;
+    importObject = importObject ?? { imports: { imported_func: arg => alert(arg) } };
+    var module = await WebAssembly.instantiate(buffer, importObject);
+    this.instance = module.instance;
+    this.module = module;
+    return module.instance;
   }
 
 }

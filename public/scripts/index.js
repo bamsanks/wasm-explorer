@@ -77,9 +77,31 @@ if (urlParams.get("file") == "small") {
 } else if (urlParams.get("file") == "edited") {
   wasm_path = './wasm/edited.wasm';
   importObject = { imports: { imported_func: arg => alert(arg) } };
+} else if (urlParams.get("file") == "two") {
+  wasm_path = './wasm/two_imports.wasm';
+  importObject = {
+    "./basic_wasm_bg.js": {
+      __wbg_alert_e162fa999d6c31a8: (arg1, arg2) => alert(arg1 + ", " + arg2),
+      __wbg_btoa_0e1970a4f9e88993: (arg1, arg2) => alert("btoa: " + arg1 + " " + arg2)
+    }
+  };
+  //importObject = { imports: { imported_func: arg => alert(arg) } };
 } else {
   wasm_path = './wasm/basic_wasm_mod.wasm';
   importObject = { imports: { __wbg_alert_e162fa999d6c31a8: (arg1, arg2) => alert(arg1 + ", " + arg2) } };
+}
+
+function download() {
+  var filename = "modified.wasm";
+  var data = new Uint8Array(parser.write());
+  var blob = new Blob([data], {type: "application/octet-stream"});
+  var element = document.createElement('a');
+  element.setAttribute('href', URL.createObjectURL(blob));
+  element.setAttribute('download', filename);
+  element.style.display = 'none';
+  document.body.appendChild(element);
+  element.click();
+  document.body.removeChild(element);
 }
 
 var wasmMod;
@@ -108,4 +130,38 @@ window.onload = function() {
     wasmMod = mod.instance.exports;
     //mod.instance.exports.exported_func();
   });
+}
+
+async function test() {
+  parser.sections[4].codes[0].byteCode[3] = 1;
+  // parser.sections[1].imports.pop();
+
+  // Add new import
+  parser.sections[1].imports.push({
+    module: "imports",
+    name: "imported_func_2",
+    descTag: 0,
+    descInfo: 1
+  });
+  // Add new type
+  parser.sections[0].types[1].params = [127];
+  parser.sections[0].types[2] = { params:[], returns:[] };
+  // Update export to point to last type
+  parser.sections[2].types[0] = 2;
+  parser.sections[3].exports[0].idx = 2;
+  // Re-write binary data, re-parse for sections and print
+  parser.write();
+  parser.parse();
+  viewer.print();
+
+  importObject = {
+    imports: {
+      imported_func:   arg => alert("1: " + arg),
+      imported_func_2: arg => console.log("2: " + arg)
+    }
+  };
+
+  await parser.instantiateSelf(importObject);
+  parser.instance.exports.exported_func();
+
 }

@@ -9,7 +9,6 @@ class Viewer {
       throw("A viewer object must be initialised with a DataSet object");
     }
     this.data = data;
-    this._bytes = data.bytes;
     this._container = container;
     this._lineOffset = 0;
     this._highlightedCells = [];
@@ -82,6 +81,7 @@ class Viewer {
     this._createScroller();
 
     this._attachMouseEvents();
+    this._attachKeyEvents();
     this._attachScrollEvents();
 
   }
@@ -99,7 +99,7 @@ class Viewer {
   }
 
   resize = function () {
-    var numDataLines = Math.ceil(this._bytes.length) / 16;
+    var numDataLines = Math.ceil(this.data.bytes.length) / 16;
     var dummy = this._scroller.getElementsByTagName("div")[0];
     dummy.style.height = numDataLines * 40 + "px";
   }
@@ -111,7 +111,7 @@ class Viewer {
       let hexLine = this._subViews.hexLines[line];
       let txtLine = this._subViews.txtLines[line];
       for (let c = 0; c < 16; c++) {
-        let cellVal = this._bytes[lineStartByte + c];
+        let cellVal = this.data.bytes[lineStartByte + c];
         hexLine.getElementsByTagName("div")[c].innerHTML = decToHex(cellVal);
         txtLine.getElementsByTagName("div")[c].innerHTML = convertToChar(cellVal);
       }
@@ -140,10 +140,10 @@ class Viewer {
     startRow -= this._lineOffset;
     endRow -= this._lineOffset;
 
-    startChar.style.top = (startRow * Viewer.ROW_SIZE - 1) + "px";
-    startChar.style.left = (startCol * Viewer.COL_SIZE - 3) + "px";
-    endChar.style.top = (endRow * Viewer.ROW_SIZE - 1) + "px";
-    endChar.style.left = ((endCol + 1) * Viewer.COL_SIZE - 4) + "px";
+    startChar.style.top = (startRow * Viewer.ROW_SIZE - 3.5) + "px";
+    startChar.style.left = (startCol * Viewer.COL_SIZE - 4) + "px";
+    endChar.style.top = (endRow * Viewer.ROW_SIZE - 3.5) + "px";
+    endChar.style.left = ((endCol + 1) * Viewer.COL_SIZE - 6.5) + "px";
 
   }
 
@@ -178,11 +178,32 @@ class Viewer {
       setTimeout(() => this._container.onmousemove(e), 0);
     }.bind(this);
   }
+
+  _attachKeyEvents = function() {
+    document.body.onkeydown = function(e) {
+      if (e.keyCode == 35) {
+        this.jumpTo(this.data.length-1);
+      }
+      if (e.keyCode == 36) {
+        this.jumpTo(0);
+      }
+    }.bind(this);
+
+    this._container.onmouseleave = function(e) {
+      this.unhighlightAllCells();
+    }.bind(this);
+  
+    this._container.onmousewheel = function(e) {
+      var scaleFactor = (e.deltaY % 150 == 0) ? 12 : 12; // Option to change factor for mouse vs trackpad
+      this._scroller.scrollTo(null, this._scroller.scrollTop + e.deltaY * 40 / scaleFactor);
+      setTimeout(() => this._container.onmousemove(e), 0);
+    }.bind(this);
+  }
   
   _attachScrollEvents = function() {
     this._scroller.onscroll = function() {
       var scrollPerc = this._scroller.scrollTop / (this._scroller.scrollHeight - this._scroller.clientHeight);
-      var numLines = Math.ceil(this._bytes.length / 16);
+      var numLines = Math.ceil(this.data.bytes.length / 16);
       this._lineOffset = Math.floor((numLines - this._numLines) * scrollPerc);
       if (this._lineOffset % 2 == 0) {
         this._container.classList.remove("offset");
@@ -197,7 +218,7 @@ class Viewer {
     var row, col;
     [row, col] = this._getCoords(byte);
     var targetLine = row - Math.floor(this._numLines / 2);
-    var perc = targetLine / Math.ceil(this._bytes.length / 16 - this._numLines);
+    var perc = targetLine / Math.ceil(this.data.bytes.length / 16 - this._numLines);
     perc = Math.min(Math.max(perc, 0), 1);
     var scrollMax = this._scroller.scrollHeight - this._scroller.clientHeight;
     this._scroller.scrollTo(null, perc * scrollMax);

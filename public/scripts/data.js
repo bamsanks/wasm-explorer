@@ -22,7 +22,7 @@ class DataSet {
     var index = this.indexBuffer.pop();
     var section = this.sections[index];
     section.end = end - 1;
-    section.length = section.end - section.start;
+    section.length = section.end - section.start + 1;
     if (description !== null) section.description = description;
     if (type !== null) section.type = type;  
     section.toString = () => {
@@ -47,6 +47,10 @@ class DataSet {
   getSections = function(byte) {
     return this.sections.filter(section =>
       byte >= section.start && byte <= section.end);
+  }
+  
+  removeAllSections = function() {
+    this.sections = [];
   }
 
 }
