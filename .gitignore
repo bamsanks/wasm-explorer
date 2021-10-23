@@ -3,3 +3,4 @@ node_modules/
 package-lock.json
 certs/
 private/rust/
+public/wasm/simple.wasm:Zone.Identifier

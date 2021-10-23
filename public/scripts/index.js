@@ -2,8 +2,6 @@ var globals = {
   cellsToClear: []
 }
 
-
-
 function decToHex(d, pad = 2) {
   var c;
   var h = "";
@@ -14,6 +12,20 @@ function decToHex(d, pad = 2) {
     h = c + h;
   }
   return h.padStart(pad, "0");
+}
+
+function hexToDec(h) {
+  var ex = 1;
+  var res = 0;
+  h = h.toUpperCase();
+  for (let i = h.length - 1; i >= 0; i--) {
+    let v = h.charCodeAt(i);
+    v = (v > 64) ? v - 55 : v - 48;
+    if (v < 0 || v > 15) throw("Bad hex");
+    res += v * ex;
+    ex *= 16;
+  }
+  return res;
 }
 
 
@@ -40,16 +52,25 @@ function createByteLink(pos) {
   return link;
 }
 
-function highlightSections(byte) {
-  var sections = parser.data.getSections(byte);
+function highlightSections(byte, hideAllElse = false) {
+  var sections = parser.data.getSections(byte).sort((x, y) => x.length < y.length);
+  parser.data.getSections(50)
   writeDetails(null, false);
-  for (let section of sections) {
-    viewer.highlightSection(section.start, section.end);
+  var numSingles = sections.filter(x => x.length == 1).length;
+  var n = sections.length - 1 - numSingles;
+  var c = 0;
+  for (var cell of viewer.hexCells) {
+    cell.style.color = hideAllElse ? "#0004" : "#000";
+  }
+  for (let i in sections) {
+    let section = sections[i];
+    if (section.length == 1) c++;
+    viewer.highlightSection(section.start, section.end, byte, n - i + c);
     writeDetails(section.toString());
-    if (section.type == "Section") {
+    if (section.name == "Section") {
       writeDetails("Start:       0x" + createByteLink(section.start).outerHTML);
       writeDetails("End:         0x" + createByteLink(section.end).outerHTML);
-      writeDetails("Length:      0x" + decToHex(section.length, 8));
+      writeDetails("Length:      0x" + decToHex(section.length, 2) + " = " + section.length);
     }
   }
 }
@@ -60,6 +81,13 @@ function unhighlightAllSections() {
   var en = document.getElementsByClassName("section-end");
   for (let i = st.length; i > 0; i--) st[i-1].remove();
   for (let i = en.length; i > 0; i--) en[i-1].remove();
+  for (let hex of this.viewer._subViews.hexLines) {
+    let cols = hex.getElementsByTagName("div");
+    for (let c of cols) {
+      c.removeAttribute("style");
+      c.classList.remove("section");
+    }
+  }
 }
 
 var parser;
@@ -116,6 +144,7 @@ window.onload = function() {
       parser = new Parser(wasmData);
       viewer.print();
       parser.parse();
+      viewer.jumpTo(0x34f0);
     });
   });
 
@@ -132,36 +161,3 @@ window.onload = function() {
   });
 }
 
-async function test() {
-  parser.sections[4].codes[0].byteCode[3] = 1;
-  // parser.sections[1].imports.pop();
-
-  // Add new import
-  parser.sections[1].imports.push({
-    module: "imports",
-    name: "imported_func_2",
-    descTag: 0,
-    descInfo: 1
-  });
-  // Add new type
-  parser.sections[0].types[1].params = [127];
-  parser.sections[0].types[2] = { params:[], returns:[] };
-  // Update export to point to last type
-  parser.sections[2].types[0] = 2;
-  parser.sections[3].exports[0].idx = 2;
-  // Re-write binary data, re-parse for sections and print
-  parser.write();
-  parser.parse();
-  viewer.print();
-
-  importObject = {
-    imports: {
-      imported_func:   arg => alert("1: " + arg),
-      imported_func_2: arg => console.log("2: " + arg)
-    }
-  };
-
-  await parser.instantiateSelf(importObject);
-  parser.instance.exports.exported_func();
-
-}

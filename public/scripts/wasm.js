@@ -1,3 +1,5 @@
+// TODO: Split parser into two classes - WasmReader and Wasm?
+
 class Parser {
 
   static SECTION_CODES = [
@@ -10,78 +12,33 @@ class Parser {
     FUNCTION: 3, TABLE:  4, MEMORY: 5,
     GLOBAL:   6, EXPORT: 7, START:  8,
     ELEMENT:  9, CODE:  10, DATA:  11 };
-  static MAGIC_NUMBER = [0, 97, 115, 109];
+  static MAGIC_NUMBER = 1836278016;
 
   constructor(data) {
     this.data = data;
-    //this._fileLength = data.bytes.length;
-    this._pos = 0;
     this._version = null;
     this.sections = [];
-  }
-
-  get EOF() {
-    return this._pos >= this.data.bytes.length;
-  }
-
-  get functions() {
-    var types = this.getSection(Parser.SECTION_ENUMS.TYPE).types;
-    var imports = this.getSection(Parser.SECTION_ENUMS.IMPORT).imports;
-    var funcs = this.getSection(Parser.SECTION_ENUMS.FUNCTION);
-    var exports = this.getSection(Parser.SECTION_ENUMS.EXPORT).exports;
-    for (var export of exports) {
-      export.type = types[export.idx];
-    }
-  }
-  set functions(data) {
-    
+    this.machine = new Machine(this);
+    this.globals = [];
+    this.memory = [];
   }
 
   getSection = function(s) {
     if (typeof s === "string") {
-      return this.sections.find(x => x.type.toUpperCase() == s.toUpperCase());
+      return this.sections.find(x => x.section.toUpperCase() == s.toUpperCase());
     } else {
-      return this.sections.find(x => x.typeId == s);
+      return this.sections.find(x => x.sectionId == s);
     }
-  }
-
-  readByte = function() {
-    if (this.EOF) throw("Attempted to read byte past end of stream.");
-    return this.data.bytes[this._pos++];
-  }
-
-  readByteArray = function(n) {
-    if (this._pos + n > this.data.bytes.length) throw("Attempted to read byte past end of stream.");
-    var arr = this.data.bytes.slice(this._pos, this._pos + n);
-    this._pos += n;
-    return Array.from(arr);
   }
 
   readExpression = function() {
-    // TODO: implement. expressions end in 0x0B
+    // TODO: implement. expressions and blocks end in 0x0B
   }
 
-  readString = function(length = null) {
-    var str = "";
-    if (length === null) length = this.readByte();
-    for (let i = 0; i < length; i++) {
-      str += String.fromCharCode(this.readByte());
-    }
-    return str;
-  }
-
-  readValType = function() {
-    var b = this.readByte();
+  readValType = function(desc) {
+    var b = this.data.readByte(desc);
     if (b > 123 && b < 128) return b;
     throw("Invalid ValType");
-  }
-  
-  readUInt32 = function() {
-    var x = 0;
-    for (let i = 0; i < 4; i++) {
-      x += this.readByte() * Math.pow(2, 8*i);
-    }
-    return x;
   }
 
   writeUInt32 = function(n) {
@@ -92,18 +49,6 @@ class Parser {
       n = (n - v) / 256;
     }
     return out;
-  }
-  
-  readULEB128 = function() {
-    var x = 0;
-    var i = 0;
-    var stop = false;
-    while (!stop) {
-      let b = this.readByte()
-      x += (b % 128) * Math.pow(2, 7*i++);
-      stop = ((b & 128) == 0);
-    }
-    return x;
   }
 
   writeByte = function(n) {
@@ -132,19 +77,19 @@ class Parser {
   }
   
   readMagicNumber = function() {
-    this.data.markSection(this._pos, Parser.MAGIC_NUMBER.length, "Magic Number", "UInt32");
-    for (var b of Parser.MAGIC_NUMBER) {
-      if (this.readByte() != b) throw("Invalid magic number!");
-    }
+    this.data.startMarking();
+    if (this.data.readUInt32() != Parser.MAGIC_NUMBER) throw("Invalid magic number!");
+    this.data.stopMarking("Magic Number = " + Parser.MAGIC_NUMBER, "UInt32");
   }
 
   writeMagicNumber = function() {
-    return Parser.MAGIC_NUMBER;
+    return this.writeUInt32(Parser.MAGIC_NUMBER);
   }
   
   readVersion = function() {
-    this.data.markSection(this._pos, 4, "Version number", "UInt32");
-    this._version = this.readUInt32();
+    this.data.startMarking("Version number", "UInt32");
+    this._version = this.data.readUInt32();
+    this.data.stopMarking()
   }
 
   writeVersion = function() {
@@ -153,17 +98,12 @@ class Parser {
   
   readSection = function() {
     var section = {};
-    var headerStart = this._pos;
-    this.data.startMarking(this._pos);
-    section.typeId = this.readByte();
-    section.type = Parser.SECTION_CODES[section.typeId];
-    this.data.startMarking(this._pos);
-    section.length = this.readULEB128();
-    this.data.stopMarking(this._pos, section.length, "Byte count");
-    var description = section.type + " section";
-    var headerLength = this._pos - headerStart;
-    this.data.stopMarking(this._pos + section.length, description, "Section");
-    switch (section.typeId) {
+    this.data.startMarking();
+    section.sectionId = this.data.readByte("ID byte");
+    section.section = Parser.SECTION_CODES[section.sectionId];
+    section.length = this.data.readULEB128("Byte count");
+    var description = section.section + " section";
+    switch (section.sectionId) {
       case Parser.SECTION_ENUMS.TYPE: // ID = 0x01
         section = this.readSectionType(section);
         break;
@@ -185,158 +125,184 @@ class Parser {
       case Parser.SECTION_ENUMS.CODE: // ID = 0x0A
         section = this.readSectionCode(section);
         break;
-      // case Parser.SECTION_ENUMS.DATA: // ID = 0x0B
-      //   section = this.readSectionData(section);
-      //   break;
+      case Parser.SECTION_ENUMS.DATA: // ID = 0x0B
+        section = this.readSectionData(section);
+        break;
       default:
-        console.log("Skipped " + section.typeId + " section");
-        //this._pos += section.length;
+        console.log("Skipped " + section.section + " section");
         // this doesn't include the section id and length!
-        section.rawdata = this.readByteArray(section.length);
+        section.rawdata = this.data.readByteArray(section.length);
     }
+    this.data.stopMarking(description, "Section");
     this.sections.push(section);
   }
 
   readSectionType = function(template) {
-    var count = this.readULEB128();
+    this.data.startMarking();
+    var count = this.data.readULEB128();
+    this.data.stopMarking(count, "Num entries");
     template.types = [];
     for (var i = 0; i < count; i++) {
+      this.data.startMarking();
       template.types.push(this.readType());
+      this.data.stopMarking(i, "Type entry");
     }
     return template;
   }
 
   readSectionImport = function(template) {
-    this.data.startMarking(this._pos);
-    var count = this.readULEB128();
-    this.data.stopMarking(this._pos, count, "Num entries");
+    var count = this.data.readULEB128("Num entries");
     template.imports = [];
     for (let i = 0; i < count; i++) {
-      this.data.startMarking(this._pos, i, "Import idx");
+      this.data.startMarking(i, "Import idx");
       template.imports.push({
-        module: this.readString(),
-        name: this.readString(),
-        tag: this.readByte(),
-        idx: this.readULEB128()
+        module: this.data.readString("Module"),
+        name: this.data.readString("Name"),
+        tag: this.data.readByte("Tag"),
+        index: this.data.readULEB128("Index")
       });
-      this.data.stopMarking(this._pos);
+      this.data.stopMarking();
     }
     return template;
   }
 
   readSectionFunction = function(template) {
-    var count = this.readULEB128();
+    var count = this.data.readULEB128("Num funcs");
     template.types = [];
     for (let i = 0; i < count; i++) {
-      template.types.push(this.readULEB128());
+      this.data.startMarking(i, "Definition");
+      template.types.push(this.data.readULEB128());
+      this.data.stopMarking();
     }
     return template;
   }
 
   readSectionMemory = function(template) {
-    var count = this.readULEB128();
+    var count = this.data.readULEB128();
     template.memories = [];
     for (let i = 0; i < count; i++) {
-      let hasMax = (this.readByte() == 1);
+      let hasMax = (this.data.readByte() == 1);
       template.memories.push({
-        min: this.readULEB128(),
-        max: hasMax ? this.readULEB128() : null
+        min: this.data.readULEB128(),
+        max: hasMax ? this.data.readULEB128() : null
       });
     }
     return template;
   }
 
   readSectionGlobal = function(template) {
-    var count = this.readULEB128();
+    var count = this.data.readULEB128();
     template.globals = [];
+    var pos = this.data.pos;
     for (let i = 0; i < count; i++) {
-      template.globals.push({
+      var g = {
         type: this.readValType(),
-        mutable: this.readByte() == 1,
-        expr: this.readByteArray(6) // THIS IS NOT NECESSARILY 6!
-      });
+        mutable: this.data.readByte() == 1,
+        value: this.machine.executeBlock(true) // THIS IS NOT ALWAYS GOING TO BE 6!
+      };
+      template.globals.push(g);
+      this.machine.globals.push(g.value);
     }
+
     return template;
   }
   
   readSectionExports = function(template) {
-    var count = this.readULEB128();
+    var count = this.data.readULEB128();
     template.exports = [];
     for (let i = 0; i < count; i++) {
+      this.data.startMarking(i, "Export idx");
       let item = {
-        name: this.readString(),
-        tag: this.readByte(),
-        idx: this.readULEB128()
+        name: this.data.readString("Name"),
+        tag: this.data.readByte("Tag"),
+        index: this.data.readULEB128("Index")
       };
-      item.getByteCode = () => this.getByteCode(item.name);
+      this.data.stopMarking();
+      item.getFunction = function() {
+        return this.getInternalFunction(item.index);
+      }.bind(this);
       template.exports.push(item);
     }
     return template;
   }
   
   readSectionCode = function(template) {
-    this.data.markSection(this._pos, 1, "Number of codes", "Detail");
-    var count = this.readULEB128();
+    //this.data.markSection(1, "Number of codes", "Detail");
+    var count = this.data.readULEB128("Num entries");
     template.codes = [];
+    //template.codepos = [];
     for (let i = 0; i < count; i++) {
-      this.data.startMarking(this._pos, "Code entry " + i, "Detail");
+      this.data.startMarking("Code entry " + i, "Detail");
+      //template.codepos.push(this.data.pos);
       template.codes.push(this.readCode());
-      this.data.stopMarking(this._pos);
+      this.data.stopMarking();
     }
     return template;
   }
 
-  // TODO: Implement
-  // readSectionData = function(template) {
-  //   var count = this.readULEB128();
-  //   template.datas = [];
-  //   for (let i = 0; i < count; i++) {
-  //     template.datas.push({
-  //       memIdx: this.readULEB128(),
-  //       offset: ,
-  //       init: 
-  //     }
-  //   }
-  //   return template;
-  // }
+  readSectionData = function(template) {
+    var count = this.data.readULEB128();
+    template.datas = [];
+    for (let i = 0; i < count; i++) {
+      var t = {
+        memIdx: this.data.readULEB128(),
+        offset: this.machine.executeBlock(true),
+        init: this.data.readByteArray()
+      };
+      template.datas.push(t);
+      let datalen = t.init.length;
+      for (let j = 0; j < datalen; j++) {
+        this.memory[t.offset + j] = t.init[j];
+      }
+    }
+    return template;
+  }
 
   readCode = function() {
-    this.data.startMarking(this._pos, "Entry size", "Detail");
-    var size = this.readULEB128();
-    this.data.stopMarking(this._pos);
-    this.data.startMarking(this._pos, "Locals", "Subsection");
-    var startRef = this._pos;
-    var numLocals = this.readULEB128();
+    var size = this.data.readULEB128("Entry size");
+    this.data.startMarking("Locals", "Subsection");
+    var startRef = this.data.pos;
+    var numLocals = this.data.readULEB128("Num locals");
     var locals = [];
     for (let i = 0; i < numLocals; i++) {
       locals.push({
-        N: this.readULEB128(),
-        valType: this.readValType()
+        N: this.data.readULEB128("Count"),
+        valType: this.readValType("Data type")
       });
     }
-    this.data.stopMarking(this._pos);
+    this.data.stopMarking();
     var byteCode = [];
-    var remainder = size - (this._pos - startRef);
+    var bytePos = this.data.pos;
+    var remainder = size - (this.data.pos - startRef);
+    // TODO: Implement readExpression rather than "reading the rest"
+    this.data.startMarking("Code", "Subsection")
     for (let i = 0; i < remainder; i++) {
-      byteCode.push(this.readByte());
+      byteCode.push(this.data.readByte());
     }
-    return { locals: locals, byteCode: byteCode }
+    this.data.stopMarking()
+    return {
+      locals: locals,
+      byteCode: byteCode,
+      bytePos: bytePos,
+      printHex: () => this.data.printHex(bytePos, byteCode.length),
+      loadToMachine: () => this.machine.loadFunction(locals, bytePos)
+    }
   }
 
   readType = function() {
     // Types start with the function tag 0x60 = 96
-    if (this.readByte() != 96) throw("Invalid type - unexpected value in tag byte");
+    if (this.data.readByte() != 96) throw("Invalid type - unexpected value in tag byte");
     var params = [], returns = [];
-    var numParams = this.readULEB128();
-    for (let i = 0; i < numParams; i++) params.push(this.readValType());
-    var numReturns = this.readULEB128();
-    for (let i = 0; i < numReturns; i++) returns.push(this.readValType());
+    var numParams = this.data.readULEB128("Num params");
+    for (let i = 0; i < numParams; i++) params.push(this.readValType("Parameter"));
+    var numReturns = this.data.readULEB128("Num returns");
+    for (let i = 0; i < numReturns; i++) returns.push(this.readValType("Return"));
     return { params: params, returns: returns };
   }
   
   writeSection = function(section) {
     var out = [];
-    switch(section.typeId) {
+    switch(section.sectionId) {
       case Parser.SECTION_ENUMS.TYPE: // ID = 0x01
         out = out.concat(this.writeSectionType(section));
         break;
@@ -358,11 +324,14 @@ class Parser {
       case Parser.SECTION_ENUMS.CODE: // ID = 0x0A
         out = out.concat(this.writeSectionCode(section));
         break;
+      case Parser.SECTION_ENUMS.DATA: // ID = 0x0A
+        out = out.concat(this.writeSectionData(section));
+        break;
       default:
         out = out.concat(section.rawdata) // Unhandled, so just write what we read in
     }
     out = this.writeULEB128(out.length).concat(out);
-    out = this.writeByte(section.typeId).concat(out); // Maybe enforce less than 256? writeByte function?
+    out = this.writeByte(section.sectionId).concat(out);
     return out;
   }
 
@@ -382,7 +351,7 @@ class Parser {
       out = out.concat(this.writeString(section.imports[i].module));
       out = out.concat(this.writeString(section.imports[i].name));
       out = out.concat(this.writeByte(section.imports[i].tag));
-      out = out.concat(this.writeULEB128(section.imports[i].idx));
+      out = out.concat(this.writeULEB128(section.imports[i].index));
     }
     return out;
   }
@@ -427,7 +396,7 @@ class Parser {
     for (let i = 0; i < section.exports.length; i++) {
       out = out.concat(this.writeString(section.exports[i].name));
       out = out.concat(this.writeByte(section.exports[i].tag));
-      out = out.concat(this.writeULEB128(section.exports[i].idx));
+      out = out.concat(this.writeULEB128(section.exports[i].index));
     }
     return out;
   }
@@ -441,9 +410,21 @@ class Parser {
     return out;
   }
 
+  writeSectionData = function(section) {
+    var out = [];
+    out = out.concat(this.writeULEB128(section.datas.length));
+    for (let data of section.datas) {
+      var expr = [65, 128, 128, 192, 0, 11];
+      out = out.concat(this.writeULEB128(data.memIdx));
+      out = out.concat(this.writeULEB128(expr.length));
+      out = out.concat(this.writeByteArray(expr));
+      out = out.concat(this.writeByteArray(data.init));
+    }
+    return out;
+  }
+
   writeCode = function(code) {
     var out = [];
-    out = out.concat();
     out = out.concat(this.writeULEB128(code.locals.length));
     for (let local of code.locals) {
       out = out.concat(this.writeULEB128(local.N));
@@ -466,33 +447,43 @@ class Parser {
     return out;
   }
 
-  getByteCode = function(functionName) {
-    var exports = parser.sections[Parser.SECTION_ENUMS.EXPORT].exports;
-    var codes = parser.sections[Parser.SECTION_ENUMS.CODE].codes;
-    for (let i in exports) {
-      if (exports[i].name == functionName) {
-        return codes[i].byteCode;
-      }
+  getInternalFunction = function(funcIdx) {
+    //var exports = parser.getSection(Parser.SECTION_ENUMS.EXPORT).exports;
+    var functions = this.getSection("function").types;
+    var types = this.getSection("type").types;
+    var codes = this.getSection("code").codes;
+    var numImports = this.getSection("import").imports.length;
+    var codeIdx = funcIdx < numImports ? null : funcIdx - numImports;
+    var typeIdx = functions[codeIdx];
+    
+    return {
+      types: types[typeIdx],
+      code: codes[codeIdx]
     }
-  }
-
-  getFunction = function(idx) {
-    // var imports = this.sections.filter(x => x.typeId == Parser.SECTION_ENUMS.IMPORT)[0];
-    // var exports = this.sections.filter(x => x.typeId == Parser.SECTION_ENUMS.EXPORT)[0];
-    // for (var import of imports.imports) {
-
-    // }
   }
   
   parse = function() {
-    this._pos = 0;
+    this.data.pos = 0;
     this.sections = [];
     this.data.removeAllSections();
     this.readMagicNumber();
     this.readVersion();
-    while (!this.EOF) {
+    while (!this.data.EOF) {
       this.readSection();
     }
+    this.createExports();
+  }
+
+  createExports = function() {
+    var exports = this.getSection("EXPORT").exports;
+    var types = this.getSection("TYPE").types;
+    exports = exports.filter(x => x.tag == 0);
+    for (var item of exports) {
+      item.type = types[item.index];
+      //delete item.index;
+      item.call = () => Machine.run
+    }
+    this.exports = exports;
   }
 
   write = function(updateSelf = true) {

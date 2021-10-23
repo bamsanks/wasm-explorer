@@ -2,6 +2,11 @@
   border: none;
 }
 
+
+#hex-viewer code#lineNums div {
+  justify-content: flex-end;
+}
+
 #hex-viewer {
   display: flex;
   margin-top: 20px;
@@ -72,4 +77,13 @@
 #scroller {
   overflow-y: scroll;
   min-width: 30px;
+  margin-left: auto;
+}
+
+#hex-viewer>code>div>div.highlighted {
+  background-color: #0c88;
+}
+
+#hex-viewer>code>div>div.temphighlighted {
+  background-color: #008cc8 !important;
 }
